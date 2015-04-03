@@ -3,3 +3,5 @@
 /ggp-base.jar
 /.gradle/
 /build/
+/.idea/
+*.iml
