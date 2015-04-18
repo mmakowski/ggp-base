@@ -2,6 +2,13 @@
   (:import [org.ggp.base.player.gamer.statemachine StateMachineGamer]
            [org.ggp.base.util.statemachine.implementation.prover ProverStateMachine]))
 
+(defn random-move [gamer]
+  (let [state-machine (.getStateMachine gamer)
+        current-state (.getCurrentState gamer)
+        role          (.getRole gamer)
+        random-move   (.getRandomMove state-machine current-state role)]
+    random-move))
+
 (defn MeerkatGamer []
   (proxy [StateMachineGamer] []
 
@@ -9,13 +16,7 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (let [state-machine    (.getStateMachine this)
-            current-state    (.getCurrentState this)
-            role             (.getRole this)
-            legal-moves      (.getLegalMoves state-machine current-state role)]
-        (do
-          (println legal-moves)
-          (.get legal-moves 0))))
+      (random-move this))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
@@ -25,3 +26,4 @@
 
     (stateMachineStop []
       (println "MeerkatGamer stop called"))))
+
