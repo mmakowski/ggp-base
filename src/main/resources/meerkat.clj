@@ -9,13 +9,13 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (let [state-machine (.getStateMachine this)
-            current-state (.getCurrentState this)
-            role          (.getRole this)
-            random-move   (.getRandomMove state-machine
-                                          current-state
-                                          role)]
-        random-move))
+      (let [state-machine    (.getStateMachine this)
+            current-state    (.getCurrentState this)
+            role             (.getRole this)
+            legal-moves      (.getLegalMoves state-machine current-state role)]
+        (do
+          (println legal-moves)
+          (.get legal-moves 0))))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
