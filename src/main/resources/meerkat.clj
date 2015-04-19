@@ -45,14 +45,17 @@
                     next-states (map (partial make-move state) joint-moves)
                     max-scores (map (comp :score max-score) next-states)
                     min-max-score (reduce min (first max-scores) max-scores)]
-                (do (println [move min-max-score]) {:move move :score min-max-score})))
+                {:move move :score min-max-score}))
             (max-score [state]
               (if (.isTerminal state-machine state)
                 {:move :f :score (.getGoal state-machine state role)}
                 (let [moves  (.getLegalMoves state-machine state role)
                       scored-moves (do (assert (> (count moves) 0)) (map (partial min-score state) moves))]
                   (reduce higher-score (first scored-moves) scored-moves))))]
-      (:move (max-score current-state)))))
+      (let [moves (.getLegalMoves state-machine current-state role)]
+        (if (= (count moves) 1)
+          (first moves)
+          (:move (max-score current-state)))))))
 
 (defn MeerkatGamer []
   (proxy [StateMachineGamer] []
