@@ -14,7 +14,7 @@
     candidate
     curr-max))
 
-(defn compulsive-deliberation [gamer]
+(defn bounded-depth [gamer max-depth]
   (do
     (assert (= (count (.getRoles (.getStateMachine gamer))) 1))
     (let [state-machine (.getStateMachine gamer)
@@ -35,14 +35,38 @@
               best-move-and-score (reduce higher-score (first scored-moves) scored-moves)]
           (:move best-move-and-score))))))
 
-(defn alpha-beta [gamer]
+(defn one-nonterm-or-actual [state-machine state roles]
+  (if (.isTerminal state-machine state)
+    (.getGoal state-machine state (first roles))
+    1))
+
+(defn my-goal [state-machine state roles]
+  (.getGoal state-machine state (first roles)))
+
+(defn advantage [state-machine state roles]
+  (let [goals (map (fn [role] (.getGoal state-machine state role)) roles)
+        my-goal (first goals)
+        others-max (reduce max 0 (rest goals))]
+    (- my-goal others-max)))
+
+(defn ordered-roles [roles role]
+  (if (= (first roles) role)
+    roles
+    (ordered-roles (concat (rest roles) [(first roles)]) role)))
+
+(defn alpha-beta [gamer max-depth heuristic]
   (let [state-machine (.getStateMachine gamer)
         current-state (.getCurrentState gamer)
-        role          (.getRole gamer)]
-    (letfn [(min-score [state move alpha beta]
+        role          (.getRole gamer)
+        roles         (ordered-roles (.getRoles state-machine) role)]
+    (letfn [(min-score [state move alpha beta depth]
               (let [joint-moves   (.getLegalJointMoves state-machine state role move)
                     make-move     (fn [joint-move] (.getNextState state-machine state joint-move))
-                    score         (fn [beta joint-move] (max-score (make-move joint-move) alpha beta))
+                    score         (fn [beta joint-move]
+                                    (let [state (make-move joint-move)]
+                                      (if (< depth max-depth)
+                                        (max-score state alpha beta depth)
+                                        (max alpha (heuristic state-machine state roles)))))
                     beta-or-score (fn [beta joint-move] (min beta (score beta joint-move)))
                     cutoff-score  (fn [beta joint-move]
                                     (if (<= beta alpha)
@@ -50,11 +74,11 @@
                                       (beta-or-score beta joint-move)))
                     min-max-score (reduce cutoff-score beta joint-moves)]
                 min-max-score))
-            (max-score [state alpha beta]
+            (max-score [state alpha beta depth]
               (if (.isTerminal state-machine state)
                 (.getGoal state-machine state role)
                 (let [moves          (.getLegalMoves state-machine state role)
-                      alpha-or-score (fn [alpha move]  (max alpha (min-score state move alpha beta)))
+                      alpha-or-score (fn [alpha move]  (max alpha (min-score state move alpha beta (+ depth 1))))
                       cutoff-score   (fn [alpha move]
                                        (if (>= alpha beta)
                                          beta
@@ -65,7 +89,7 @@
             best-move (fn [curr-best move]
                         (if (= (:score curr-best) 100)
                           curr-best
-                          (let [score (min-score current-state move (:score curr-best) 100)]
+                          (let [score (min-score current-state move (:score curr-best) 100 1)]
                             (if (> score (:score curr-best))
                               {:move move :score score}
                               curr-best))))]
@@ -78,9 +102,7 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (if (= (count (.getRoles (.getStateMachine this))) 1)
-        (compulsive-deliberation this)
-        (alpha-beta this)))
+      (alpha-beta this 5 one-nonterm-or-actual))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
