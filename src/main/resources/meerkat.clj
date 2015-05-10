@@ -49,6 +49,27 @@
         others-max (reduce max 0 (rest goals))]
     (- my-goal others-max)))
 
+(defn monte-carlo [probe-count]
+  (fn [state-machine state roles]
+    (letfn [(goal-or [expansion-fn state]
+              (if (.isTerminal state-machine state)
+                (.getGoal state-machine state (first roles))
+                (expansion-fn state)))
+            (random-move [state]
+              (let [moves (.getRandomJointMove state-machine state)]
+                (.getNextState state-machine state moves)))
+            (one-more-level [state]
+              (goal-or probe (random-move state)))
+            (probe [state]
+              (goal-or one-more-level state))
+            (probe-total [remaining-probes state acc]
+              (if (= 0 remaining-probes)
+                acc
+                (probe-total (- remaining-probes 1) state (+ acc (probe state)))))
+            (run-probes [state]
+              (/ (probe-total probe-count state 0) probe-count))]
+      (goal-or run-probes state))))
+
 (defn ordered-roles [roles role]
   (if (= (first roles) role)
     roles
@@ -102,7 +123,7 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (alpha-beta this 5 one-nonterm-or-actual))
+      (alpha-beta this 1 (monte-carlo 6)))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
