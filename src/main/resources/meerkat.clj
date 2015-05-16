@@ -123,6 +123,8 @@
   (let [state-machine        (.getStateMachine gamer)
         current-state        (.getCurrentState gamer)
         role                 (.getRole gamer)
+        roles                (.getRoles state-machine)
+        my-idx               (.indexOf roles role)
         random-move          (.getRandomMove state-machine current-state role)
 
         submission-time-ms   1000
@@ -137,8 +139,7 @@
                   (run updated-root-loc))))
 
             (minimax [root-loc]
-              (let [my-idx (.indexOf (.getRoles state-machine) role)
-                    my-move (fn [node] (nth (:move node) my-idx))
+              (let [my-move (fn [node] (nth (:move node) my-idx))
                     child-nodes (:children (zip/node root-loc))
                     grouped-nodes (group-by my-move child-nodes)
                     score (fn [node] (if (= (:visits node) 0) 0 (/ (:utility node) (:visits node))))
@@ -175,7 +176,7 @@
 
             (simulate [loc]
               (let [state     (:state (zip/node loc))
-                    avg-score (make-array Double/TYPE 1)
+                    avg-score (make-array Double/TYPE (count roles))
                     avg-depth (make-array Double/TYPE 1)
                     depth-discount-factor 1
                     repetitions 4]
@@ -187,7 +188,7 @@
                     avg-depth
                     depth-discount-factor
                     repetitions)
-                  (first avg-score))))
+                  (nth avg-score my-idx))))
 
             (backpropagate [loc score]
               (let [update      (fn [node]
