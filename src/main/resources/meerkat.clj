@@ -116,6 +116,47 @@
                               curr-best))))]
         (:move (reduce best-move initial moves))))))
 
+(require '[clojure.zip :as zip])
+
+(defn root-loc [tree]
+  (zip/zipper map? :children (fn [n c] (assoc n :children c)) tree))
+
+; TODO: have to do minimax here as well
+
+; (.performDepthCharge state-machine TODO) -- gives random terminal state reachable from current state
+; or even: .getAverageDiscountedScoresFromRepeatedDepthCharges
+(defn monte-carlo-tree-search [gamer]
+  (let [state-machine (.getStateMachine gamer)
+        current-state (.getCurrentState gamer)
+        role          (.getRole gamer)
+        random-move   (.getRandomMove state-machine current-state role)]
+    (letfn [(run [loc best-move best-utility] random-move) ;; TODO: select/expand/simulate/backpropagate while time remains
+
+            (select [start-loc]
+              (if (not-visited start-loc)
+                start-loc
+                (let [children (zip/children start-loc)
+                      first-not-visited-child (first (filter not-visited children))]
+                  (if (not (nil? first-not-visited-child))
+                    first-not-visited-child
+                    (select (max-by uct children))))))
+
+            (uct [loc]
+              (let [node        (zip/node loc)
+                    parent-node (zip/node (zip/up loc))]
+                (+ (:utility node) (Math/sqrt (* 2 (/ (Math/log (:visits parent-node)) (:visits node)))))))
+
+            (not-visited [loc] (= (:visits (zip/node loc) 0)))
+
+            (max-by [f seq]
+              (do
+                (assert (not (empty? seq)))
+                (let [higher-snd (fn [p1 p2] (if (> (second p2) (second p1)) p2 p1))
+                      pairs      (map #([% (f %)]) seq)]
+                  (first (reduce higher-snd (first pairs) pairs)))))]
+
+      (run (root-loc {:move nil :state current-state :utility 0 :visits 0 :children []}) random-move 0))))
+
 (defn MeerkatGamer []
   (proxy [StateMachineGamer] []
 
@@ -123,7 +164,7 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (alpha-beta this 1 (monte-carlo 6)))
+      (monte-carlo-tree-search this))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
