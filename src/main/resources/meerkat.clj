@@ -118,44 +118,119 @@
 
 (require '[clojure.zip :as zip])
 
-(defn root-loc [tree]
-  (zip/zipper map? :children (fn [n c] (assoc n :children c)) tree))
+; TODO: newly added children are not visited in current iteration -- this wastes memory
+(defn monte-carlo-tree-search [gamer timeout]
+  (let [state-machine        (.getStateMachine gamer)
+        current-state        (.getCurrentState gamer)
+        role                 (.getRole gamer)
+        random-move          (.getRandomMove state-machine current-state role)
 
-; TODO: have to do minimax here as well
+        submission-time-ms   1000
+        search-end-time      (- timeout submission-time-ms)]
+    (letfn [(run [root-loc]
+              (if (>= (System/currentTimeMillis) search-end-time)
+                (minimax root-loc)
+                (let [selected-loc     (select root-loc)
+                      expanded-loc     (expand selected-loc)
+                      score            (simulate expanded-loc)
+                      updated-root-loc (backpropagate expanded-loc score)]
+                  (run updated-root-loc))))
 
-; (.performDepthCharge state-machine TODO) -- gives random terminal state reachable from current state
-; or even: .getAverageDiscountedScoresFromRepeatedDepthCharges
-(defn monte-carlo-tree-search [gamer]
-  (let [state-machine (.getStateMachine gamer)
-        current-state (.getCurrentState gamer)
-        role          (.getRole gamer)
-        random-move   (.getRandomMove state-machine current-state role)]
-    (letfn [(run [loc best-move best-utility] random-move) ;; TODO: select/expand/simulate/backpropagate while time remains
+            (minimax [root-loc]
+              (let [my-idx (.indexOf (.getRoles state-machine) role)
+                    my-move (fn [node] (nth (:move node) my-idx))
+                    child-nodes (:children (zip/node root-loc))
+                    grouped-nodes (group-by my-move child-nodes)
+                    score (fn [node] (if (= (:visits node) 0) 0 (/ (:utility node) (:visits node))))
+                    min-score (fn [kv]
+                                (let [nodes (second kv)
+                                      scores (map score nodes)]
+                                  (reduce min scores)))]
+                (first (max-by min-score grouped-nodes))))
 
             (select [start-loc]
               (if (not-visited start-loc)
                 start-loc
-                (let [children (zip/children start-loc)
-                      first-not-visited-child (first (filter not-visited children))]
-                  (if (not (nil? first-not-visited-child))
-                    first-not-visited-child
-                    (select (max-by uct children))))))
+                (letfn [(first-not-visited-sibling [loc]
+                          (if (nil? loc)
+                            nil
+                            (if (not-visited loc)
+                              loc
+                              (first-not-visited-sibling (zip/right loc)))))]
+                  (let [first-child (zip/down start-loc)
+                        first-not-visited-child (first-not-visited-sibling first-child)]
+                    (if (not (nil? first-not-visited-child))
+                      first-not-visited-child
+                      (if (not (nil? (zip/node first-child)))
+                        (select (max-by uct (sibling-locs [first-child])))
+                        start-loc))))))
+
+            (expand [loc]
+              (let [state (:state (zip/node loc))]
+                (if (.isTerminal state-machine state)
+                  loc
+                  (let [moves (.getLegalJointMoves state-machine state)
+                        child-nodes (map (partial mk-node state) moves)]
+                    (reduce zip/append-child loc child-nodes)))))
+
+            (simulate [loc]
+              (let [state     (:state (zip/node loc))
+                    avg-score (make-array Double/TYPE 1)
+                    avg-depth (make-array Double/TYPE 1)
+                    depth-discount-factor 1
+                    repetitions 4]
+                (do
+                  (.getAverageDiscountedScoresFromRepeatedDepthCharges
+                    state-machine
+                    state
+                    avg-score
+                    avg-depth
+                    depth-discount-factor
+                    repetitions)
+                  (first avg-score))))
+
+            (backpropagate [loc score]
+              (let [update      (fn [node]
+                                  (assoc node
+                                         :visits  (+ (:visits node) 1)
+                                         :utility (+ (:utility node) score)))
+                    updated-loc (zip/edit loc update)
+                    parent-loc  (zip/up updated-loc)]
+                (if (nil? parent-loc)
+                  updated-loc
+                  (backpropagate parent-loc score))))
 
             (uct [loc]
               (let [node        (zip/node loc)
                     parent-node (zip/node (zip/up loc))]
                 (+ (:utility node) (Math/sqrt (* 2 (/ (Math/log (:visits parent-node)) (:visits node)))))))
 
-            (not-visited [loc] (= (:visits (zip/node loc) 0)))
+            (not-visited [loc]
+              (= (:visits (zip/node loc)) 0))
+
+            (sibling-locs [locs]
+              (let [next-sibling (zip/right (last locs))]
+                (if (nil? next-sibling)
+                  locs
+                  (sibling-locs (concat locs [next-sibling])))))
 
             (max-by [f seq]
               (do
                 (assert (not (empty? seq)))
                 (let [higher-snd (fn [p1 p2] (if (> (second p2) (second p1)) p2 p1))
-                      pairs      (map #([% (f %)]) seq)]
-                  (first (reduce higher-snd (first pairs) pairs)))))]
+                      pairs      (map (fn [x] [x (f x)]) seq)]
+                  (first (reduce higher-snd (first pairs) pairs)))))
 
-      (run (root-loc {:move nil :state current-state :utility 0 :visits 0 :children []}) random-move 0))))
+            (mk-node [state joint-move]
+              {:move     joint-move
+               :state    (.getNextState state-machine state joint-move)
+               :utility  0
+               :visits   0
+               :children []})
+
+            (mk-root-loc [tree]
+              (zip/zipper map? :children (fn [n c] (assoc n :children c)) tree))]
+      (run (mk-root-loc {:move nil :state current-state :utility 0 :visits 0 :children []})))))
 
 (defn MeerkatGamer []
   (proxy [StateMachineGamer] []
@@ -164,7 +239,7 @@
       (ProverStateMachine.))
 
     (stateMachineSelectMove [timeout]
-      (monte-carlo-tree-search this))
+      (monte-carlo-tree-search this timeout))
 
     (stateMachineMetaGame [timeout]
       (println "MeerkatGamer metagame called"))
