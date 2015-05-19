@@ -128,7 +128,7 @@
         my-idx               (.indexOf roles role)
         random-move          (.getRandomMove state-machine current-state role)
 
-        submission-time-ms   1000
+        submission-time-ms   2000
         search-end-time      (- timeout submission-time-ms)
 
         initial-utilities    (vec (replicate role-count 0))]
@@ -146,14 +146,11 @@
               (let [my-move (fn [node] (nth (:move node) my-idx))
                     child-nodes (:children (zip/node root-loc))
                     grouped-nodes (group-by my-move child-nodes)
-                    x1 (println "tree: " (zip/node root-loc))
                     min-score (fn [kv]
                                 (let [nodes (second kv)
                                       scores (map my-utility nodes)
                                       min-score (reduce min scores)]
-                                  (do
-                                    (println "min for " (first kv) ": " min-score)
-                                    min-score)))]
+                                  min-score))]
                 (first (max-by min-score grouped-nodes))))
 
             (select [start-loc]
