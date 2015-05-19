@@ -124,29 +124,36 @@
         current-state        (.getCurrentState gamer)
         role                 (.getRole gamer)
         roles                (.getRoles state-machine)
+        role-count           (count roles)
         my-idx               (.indexOf roles role)
         random-move          (.getRandomMove state-machine current-state role)
 
         submission-time-ms   1000
-        search-end-time      (- timeout submission-time-ms)]
+        search-end-time      (- timeout submission-time-ms)
+
+        initial-utilities    (vec (replicate role-count 0))]
+
     (letfn [(run [root-loc]
               (if (>= (System/currentTimeMillis) search-end-time)
                 (minimax root-loc)
                 (let [selected-loc     (select root-loc)
                       expanded-loc     (expand selected-loc)
-                      score            (simulate expanded-loc)
-                      updated-root-loc (backpropagate expanded-loc score)]
+                      scores           (simulate expanded-loc)
+                      updated-root-loc (backpropagate expanded-loc scores)]
                   (run updated-root-loc))))
 
             (minimax [root-loc]
               (let [my-move (fn [node] (nth (:move node) my-idx))
                     child-nodes (:children (zip/node root-loc))
                     grouped-nodes (group-by my-move child-nodes)
-                    score (fn [node] (if (= (:visits node) 0) 0 (/ (:utility node) (:visits node))))
+                    x1 (println "tree: " (zip/node root-loc))
                     min-score (fn [kv]
                                 (let [nodes (second kv)
-                                      scores (map score nodes)]
-                                  (reduce min scores)))]
+                                      scores (map my-utility nodes)
+                                      min-score (reduce min scores)]
+                                  (do
+                                    (println "min for " (first kv) ": " min-score)
+                                    min-score)))]
                 (first (max-by min-score grouped-nodes))))
 
             (select [start-loc]
@@ -158,13 +165,14 @@
                             (if (not-visited loc)
                               loc
                               (first-not-visited-sibling (zip/right loc)))))]
-                  (let [first-child (zip/down start-loc)
+                  (let [first-child             (zip/down start-loc)
                         first-not-visited-child (first-not-visited-sibling first-child)]
                     (if (not (nil? first-not-visited-child))
                       first-not-visited-child
-                      (if (not (nil? (zip/node first-child)))
-                        (select (max-by uct (sibling-locs [first-child])))
-                        start-loc))))))
+                      (if (nil? (zip/node first-child))
+                        start-loc
+                        (let [active-role-idx (active-role-idx (:state (zip/node start-loc)))]
+                          (select (max-by (muct active-role-idx) (sibling-locs [first-child]))))))))))
 
             (expand [loc]
               (let [state (:state (zip/node loc))]
@@ -176,10 +184,10 @@
 
             (simulate [loc]
               (let [state     (:state (zip/node loc))
-                    avg-score (make-array Double/TYPE (count roles))
+                    avg-score (make-array Double/TYPE role-count)
                     avg-depth (make-array Double/TYPE 1)
                     depth-discount-factor 1
-                    repetitions 4]
+                    repetitions 10]
                 (do
                   (.getAverageDiscountedScoresFromRepeatedDepthCharges
                     state-machine
@@ -188,26 +196,47 @@
                     avg-depth
                     depth-discount-factor
                     repetitions)
-                  (nth avg-score my-idx))))
+                  (vec avg-score))))
 
-            (backpropagate [loc score]
-              (let [update      (fn [node]
+            (backpropagate [loc scores]
+              (let [update-utility  (fn [visits]
+                                      (fn [utility-and-score]
+                                        (let [utility (first utility-and-score)
+                                              score   (second utility-and-score)]
+                                          (/ (+ (* visits utility) score) (+ visits 1)))))
+                    update-utilities (fn [visits utilities]
+                                       (map (update-utility visits) (map vector utilities scores)))
+                    update      (fn [node]
                                   (assoc node
                                          :visits  (+ (:visits node) 1)
-                                         :utility (+ (:utility node) score)))
+                                         :utilities (update-utilities (:visits node) (:utilities node))))
                     updated-loc (zip/edit loc update)
                     parent-loc  (zip/up updated-loc)]
                 (if (nil? parent-loc)
                   updated-loc
-                  (backpropagate parent-loc score))))
+                  (backpropagate parent-loc scores))))
 
-            (uct [loc]
-              (let [node        (zip/node loc)
-                    parent-node (zip/node (zip/up loc))]
-                (+ (:utility node) (Math/sqrt (* 2 (/ (Math/log (:visits parent-node)) (:visits node)))))))
+            ; modified upper confidence bounds on trees -- "modified" to reject terminal states
+            ; NOTE: will not work for simultaneous moves games, as assumes that in each state there is one active
+            ;       player who chooses the next move that is most promising for them
+            (muct [active-role-idx]
+              (fn [loc]
+                (let [node        (zip/node loc)
+                      parent-node (zip/node (zip/up loc))
+                      utility     (nth (:utilities node) active-role-idx)]
+                  (if (.isTerminal state-machine (:state node))
+                    0
+                    (+ utility (Math/sqrt (* 2 (/ (Math/log (:visits parent-node)) (:visits node)))))))))
 
             (not-visited [loc]
               (= (:visits (zip/node loc)) 0))
+
+            (my-utility [node]
+              (nth (:utilities node) my-idx))
+
+            (active-role-idx [state]
+              (let [active-role (max-by (fn [r] (count (.getLegalMoves state-machine state r))) roles)]
+                (.indexOf roles active-role)))
 
             (sibling-locs [locs]
               (let [next-sibling (zip/right (last locs))]
@@ -223,15 +252,15 @@
                   (first (reduce higher-snd (first pairs) pairs)))))
 
             (mk-node [state joint-move]
-              {:move     joint-move
-               :state    (.getNextState state-machine state joint-move)
-               :utility  0
-               :visits   0
-               :children []})
+              {:move      joint-move
+               :state     (.getNextState state-machine state joint-move)
+               :utilities initial-utilities
+               :visits    0
+               :children  []})
 
             (mk-root-loc [tree]
               (zip/zipper map? :children (fn [n c] (assoc n :children c)) tree))]
-      (run (mk-root-loc {:move nil :state current-state :utility 0 :visits 0 :children []})))))
+      (run (mk-root-loc {:move nil :state current-state :utilities initial-utilities :visits 0 :children []})))))
 
 (defn MeerkatGamer []
   (proxy [StateMachineGamer] []
